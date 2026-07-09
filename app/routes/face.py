@@ -43,22 +43,9 @@ async def register_face(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    prior_frame = None
-    if prior_image is not None:
-        prior_bytes = await prior_image.read()
-        if prior_bytes:
-            try:
-                prior_frame = read_image_bytes(prior_bytes)
-            except ValueError:
-                prior_frame = None
-
     recognizer = FaceRecognizer.get()
-    result = recognizer.analyze(
-        frame,
-        challenge=challenge,
-        prior_image=prior_frame,
-        require_liveness=bool(challenge),
-    )
+    # Enrollment uses quality checks only — liveness is for login verify.
+    result = recognizer.analyze(frame, require_liveness=False)
 
     if not result.embedding:
         if result.liveness and not result.liveness.passed:
