@@ -51,7 +51,10 @@ async def register_face(
         if result.liveness and not result.liveness.passed:
             raise HTTPException(
                 status_code=422,
-                detail={"success": False, "message": "Liveness check failed"},
+                detail={
+                    "success": False,
+                    "message": result.liveness.message or "Liveness check failed",
+                },
             )
         message = result.quality.issues[0] if result.quality.issues else "No valid face detected"
         raise HTTPException(
@@ -108,7 +111,10 @@ async def verify_face(
         if result.liveness and not result.liveness.passed:
             raise HTTPException(
                 status_code=422,
-                detail={"success": False, "message": "Liveness check failed"},
+                detail={
+                    "success": False,
+                    "message": result.liveness.message or "Liveness check failed",
+                },
             )
         message = result.quality.issues[0] if result.quality.issues else "No valid face detected"
         raise HTTPException(

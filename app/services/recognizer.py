@@ -55,6 +55,7 @@ class FaceRecognizer:
             return FaceAnalysisResult([], quality, None, float(face.det_score))
 
         prior_kps = None
+        prior_bbox = None
         if prior_image is not None and challenge:
             prior_faces = self._app.get(prior_image)
             if prior_faces:
@@ -63,10 +64,18 @@ class FaceRecognizer:
                     key=lambda f: float((f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])),
                 )
                 prior_kps = prior_face.kps
+                prior_bbox = prior_face.bbox
 
         liveness: LivenessResult | None = None
         if require_liveness and challenge:
-            liveness = validate_challenge(challenge, face.kps, face.bbox, image, prior_kps)
+            liveness = validate_challenge(
+                challenge,
+                face.kps,
+                face.bbox,
+                image,
+                prior_kps,
+                prior_bbox=prior_bbox,
+            )
             if not liveness.passed:
                 return FaceAnalysisResult([], quality, liveness, float(face.det_score))
 
