@@ -42,6 +42,7 @@ class FaceRecognizer:
         *,
         challenge: str | None = None,
         prior_image: np.ndarray | None = None,
+        blink_image: np.ndarray | None = None,
         require_liveness: bool = False,
     ) -> FaceAnalysisResult:
         faces = self._app.get(image)
@@ -66,6 +67,18 @@ class FaceRecognizer:
                 prior_kps = prior_face.kps
                 prior_bbox = prior_face.bbox
 
+        blink_kps = None
+        blink_bbox = None
+        if blink_image is not None and challenge:
+            blink_faces = self._app.get(blink_image)
+            if blink_faces:
+                blink_face = max(
+                    blink_faces,
+                    key=lambda f: float((f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])),
+                )
+                blink_kps = blink_face.kps
+                blink_bbox = blink_face.bbox
+
         liveness: LivenessResult | None = None
         if require_liveness and challenge:
             liveness = validate_challenge(
@@ -75,6 +88,10 @@ class FaceRecognizer:
                 image,
                 prior_kps,
                 prior_bbox=prior_bbox,
+                prior_image=prior_image,
+                blink_image=blink_image,
+                blink_kps=blink_kps,
+                blink_bbox=blink_bbox,
             )
             if not liveness.passed:
                 return FaceAnalysisResult([], quality, liveness, float(face.det_score))

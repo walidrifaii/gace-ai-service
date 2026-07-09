@@ -71,12 +71,46 @@ async def register_face(
     }
 
 
+@router.post("/extract")
+async def extract_face(
+    image: UploadFile = File(...),
+    x_api_key: str | None = Header(default=None),
+):
+    _check_api_key(x_api_key)
+    data = await image.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="No valid face detected")
+
+    try:
+        frame = read_image_bytes(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    recognizer = FaceRecognizer.get()
+    result = recognizer.analyze(frame, require_liveness=False)
+
+    if not result.embedding:
+        message = result.quality.issues[0] if result.quality.issues else "No valid face detected"
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": message, "issues": result.quality.issues},
+        )
+
+    return {
+        "success": True,
+        "embedding": result.embedding,
+        "quality_score": result.quality.score,
+        "det_score": result.det_score,
+    }
+
+
 @router.post("/verify")
 async def verify_face(
     image: UploadFile = File(...),
     stored_embedding: str = Form(...),
     challenge: str | None = Form(default=None),
     prior_image: UploadFile | None = File(default=None),
+    blink_image: UploadFile | None = File(default=None),
     x_api_key: str | None = Header(default=None),
 ):
     _check_api_key(x_api_key)
@@ -99,11 +133,21 @@ async def verify_face(
             except ValueError:
                 prior_frame = None
 
+    blink_frame = None
+    if blink_image is not None:
+        blink_bytes = await blink_image.read()
+        if blink_bytes:
+            try:
+                blink_frame = read_image_bytes(blink_bytes)
+            except ValueError:
+                blink_frame = None
+
     recognizer = FaceRecognizer.get()
     result = recognizer.analyze(
         frame,
         challenge=challenge,
         prior_image=prior_frame,
+        blink_image=blink_frame,
         require_liveness=bool(challenge),
     )
 
