@@ -8,6 +8,7 @@ import numpy as np
 CHALLENGES = ("blink", "turn_left", "turn_right", "look_up", "smile")
 
 
+
 @dataclass
 class LivenessResult:
     passed: bool
