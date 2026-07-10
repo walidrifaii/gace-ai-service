@@ -21,7 +21,7 @@ class TranslationSettings(BaseSettings):
     # Comma-separated list of codes. Argos will download+install the packages
     # needed to translate between English and each of these languages so that
     # any pair among them can be reached (Argos pivots through English).
-    supported_languages: str = "en,ar,fr,es,tr,de"
+    supported_languages: str = "en,ar,fr"
     default_target_language: str = "en"
 
     # Where Argos Translate stores downloaded/installed language packages.
