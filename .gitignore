@@ -4,3 +4,7 @@ __pycache__/
 .env
 *.egg-info/
 .pytest_cache/
+
+# Downloaded Argos Translate language packages (translation_service cache)
+translation_service/languages/*
+!translation_service/languages/.gitkeep
