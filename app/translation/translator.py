@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -18,6 +19,16 @@ from .cache import CachedTranslation, TranslationCache, make_cache_key
 from .config import TranslationSettings
 
 logger = logging.getLogger("app.translation.translator")
+
+_ARABIC_SCRIPT_RE = re.compile(
+    "["
+    "؀-ۿ"  # Arabic
+    "ݐ-ݿ"  # Arabic Supplement
+    "ࢠ-ࣿ"  # Arabic Extended-A
+    "ﭐ-﷿"  # Arabic Presentation Forms-A
+    "ﹰ-﻿"  # Arabic Presentation Forms-B
+    "]"
+)
 
 # ISO 639-1 code -> display name, for the /languages endpoint and validation.
 LANGUAGE_NAMES: dict[str, str] = {
@@ -145,17 +156,34 @@ class ArgosTranslator(BaseTranslator):
     # -- internals ---------------------------------------------------------
 
     def _detect_language(self, text: str) -> str:
+        # Arabic is script-distinguishable and short chat messages defeat
+        # langdetect's statistical model far more often than script matching
+        # does, so check this first instead of trusting langdetect for it.
+        if _ARABIC_SCRIPT_RE.search(text):
+            return "ar"
+
         try:
-            from langdetect import DetectorFactory, detect
+            from langdetect import DetectorFactory, detect_langs
 
             DetectorFactory.seed = 0  # deterministic detection
-            code = detect(text).lower()
+            candidates = detect_langs(text)
         except Exception as exc:
             raise TranslationError("Could not detect source language") from exc
 
-        # langdetect occasionally returns region-qualified codes (e.g. "zh-cn").
-        code = code.split("-")[0]
-        return code
+        # langdetect ranks guesses by probability but its top guess is
+        # frequently a language we don't support (or don't even offer)
+        # on short, ambiguous strings ("hi", "ok", ...). Walk the ranked
+        # list and use the first guess that's actually one we support,
+        # rather than failing the whole request on the top guess alone.
+        for candidate in candidates:
+            code = candidate.lang.lower().split("-")[0]
+            if code in self._supported:
+                return code
+
+        # No supported language scored at all: fall back to the pivot
+        # language rather than erroring on a message we could still
+        # translate reasonably well.
+        return PIVOT_LANGUAGE
 
     def _ensure_pair_translatable(self, source: str, target: str) -> None:
         pair = (source, target)
