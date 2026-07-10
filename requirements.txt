@@ -6,3 +6,5 @@ onnxruntime>=1.19.0
 opencv-python-headless>=4.10.0
 numpy>=1.26.0
 pydantic-settings>=2.6.0
+argostranslate==1.9.6
+langdetect==1.0.9

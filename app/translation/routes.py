@@ -1,4 +1,4 @@
-"""HTTP surface for the translation service."""
+"""HTTP surface for the translation feature."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
-from config import settings
-from models import ErrorResponse, LanguageInfo, LanguagesResponse, TranslateRequest, TranslateResponse
-from translator import TranslationError, TranslationService
+from .config import settings
+from .models import ErrorResponse, LanguageInfo, LanguagesResponse, TranslateRequest, TranslateResponse
+from .translator import TranslationError, TranslationService
 
-logger = logging.getLogger("translation_service.routes")
+logger = logging.getLogger("app.translation.routes")
 
 router = APIRouter()
 
@@ -25,15 +25,6 @@ def _check_api_key(x_api_key: str | None) -> None:
 
 def _get_service(request: Request) -> TranslationService:
     return request.app.state.translation_service
-
-
-@router.get("/health")
-async def health(request: Request):
-    service: TranslationService = _get_service(request)
-    return {
-        "status": "ok",
-        "supportedLanguages": sorted(service.supported_languages()),
-    }
 
 
 @router.get("/languages", response_model=LanguagesResponse)

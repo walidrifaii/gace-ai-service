@@ -1,8 +1,7 @@
 """Thread-safe, in-memory LRU cache for translated strings.
 
 Keyed on (text, source, target) so the same message is never sent through
-the translation engine twice. A process-local dict is enough here: the
-service is meant to be cheap to run as a single-instance sidecar, and the
+the translation engine twice. A process-local dict is enough here — the
 cache is naturally rebuilt on restart. Swap this for Redis later by
 implementing the same get/set interface if the service is ever scaled out
 horizontally.

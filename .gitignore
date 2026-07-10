@@ -5,6 +5,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Downloaded Argos Translate language packages (translation_service cache)
-translation_service/languages/*
-!translation_service/languages/.gitkeep
+# Downloaded Argos Translate language packages (translation cache)
+app/translation/languages/*
+!app/translation/languages/.gitkeep

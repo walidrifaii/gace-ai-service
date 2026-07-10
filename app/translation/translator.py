@@ -2,8 +2,8 @@
 
 `BaseTranslator` is the seam that lets us swap Argos Translate for NLLB-200,
 LibreTranslate, Google Translate, or DeepL later without touching routes.py
-or models.py: any replacement just needs to implement `translate()` and
-`detect_language()` and be handed to `TranslationService` in app.py.
+or models.py: any replacement just needs to implement `translate()` and be
+handed to `TranslationService`.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from cache import CachedTranslation, TranslationCache, make_cache_key
-from config import Settings
+from .cache import CachedTranslation, TranslationCache, make_cache_key
+from .config import TranslationSettings
 
-logger = logging.getLogger("translation_service.translator")
+logger = logging.getLogger("app.translation.translator")
 
 # ISO 639-1 code -> display name, for the /languages endpoint and validation.
 LANGUAGE_NAMES: dict[str, str] = {
@@ -61,7 +61,7 @@ class BaseTranslator(ABC):
 class ArgosTranslator(BaseTranslator):
     """`BaseTranslator` backed by the free, offline Argos Translate engine."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: TranslationSettings) -> None:
         self._settings = settings
         self._supported = {
             code: LANGUAGE_NAMES[code]
@@ -84,8 +84,8 @@ class ArgosTranslator(BaseTranslator):
         Argos Translate resolves its package storage directory the first time
         `argostranslate.settings` is imported, reading these env vars. Setting
         them here (before the first `import argostranslate`) keeps downloaded
-        packages inside the service folder so they survive as a simple cache
-        instead of scattering into the OS user-data directory.
+        packages inside this folder so they survive as a simple cache instead
+        of scattering into the OS user-data directory.
         """
         packages_dir = str(self._settings.languages_dir)
         self._settings.languages_dir.mkdir(parents=True, exist_ok=True)
@@ -217,7 +217,7 @@ class TranslationService:
 
     This is the single entry point routes.py depends on. Because it only
     talks to `BaseTranslator`, swapping Argos for another engine is a
-    one-line change (construct a different translator in app.py) with no
+    one-line change (construct a different translator in main.py) with no
     changes to this class or to the API layer.
     """
 
