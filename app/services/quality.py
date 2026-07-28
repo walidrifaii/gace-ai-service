@@ -75,33 +75,31 @@ def validate_face_quality(
         return QualityResult(False, 0.0, ["More than one face detected"])
 
     img_h, img_w = image.shape[:2]
-    if img_w < 240 or img_h < 240:
+    if img_w < 180 or img_h < 180:
         issues.append("Low resolution")
 
     brightness = _face_brightness(image, bbox)
-    if brightness < 35:
+    if brightness < 22:
         issues.append("Too dark")
-    elif brightness > 235:
+    elif brightness > 245:
         issues.append("Too bright")
     scores.append(min(1.0, brightness / 128.0))
 
     blur = _blur_score(image, bbox)
-    if blur < 28:
+    # Soft for mobile selfie cameras — only reject extremely soft frames.
+    if blur < 12:
         issues.append("Too blurry")
-    scores.append(min(1.0, blur / 160.0))
+    scores.append(min(1.0, blur / 120.0))
 
     size_ratio = _face_size_ratio(bbox, image)
-    # Allow smaller faces (common when the face is near a corner/edge of the frame).
-    if size_ratio < 0.012:
+    if size_ratio < 0.008:
         issues.append("Face too small")
     scores.append(min(1.0, size_ratio / 0.10))
 
-    # Soft score only — InsightFace already aligns faces for embeddings.
-    # Do NOT hard-reject "Face rotated" (common false positive on mobile selfies).
+    # Soft only — never hard-reject rotation (common mobile false positive).
     angle = _rotation_angle(kps)
     scores.append(max(0.45, 1.0 - angle / 55.0))
 
-    # Soft score only — never reject because the face is off-center.
     cx = (float(bbox[0]) + float(bbox[2])) / 2.0
     cy = (float(bbox[1]) + float(bbox[3])) / 2.0
     center_dx = abs(cx / max(1.0, float(img_w)) - 0.5)
@@ -109,7 +107,6 @@ def validate_face_quality(
     scores.append(max(0.55, 1.0 - (center_dx + center_dy)))
 
     if not _eyes_open(kps, bbox):
-        # Soft warning only — 5-point landmarks often false-positive on mobile selfies.
         scores.append(0.5)
 
     score = float(np.mean(scores)) if scores else 0.0
