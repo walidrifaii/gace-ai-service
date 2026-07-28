@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
 
@@ -47,6 +48,28 @@ class FaceRecognizer:
             key=lambda f: float((f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])),
         )
 
+    @staticmethod
+    def _eye_level_score(face) -> float:
+        """Higher when eyes are roughly horizontal (upright face)."""
+        kps = getattr(face, "kps", None)
+        if kps is None or len(kps) < 2:
+            return 0.0
+        left_eye, right_eye = kps[0], kps[1]
+        dy = float(right_eye[1] - left_eye[1])
+        dx = float(right_eye[0] - left_eye[0])
+        angle = abs(float(np.degrees(np.arctan2(dy, dx))))
+        return max(0.0, 1.0 - angle / 90.0)
+
+    @staticmethod
+    def _signed_eye_angle(face) -> float:
+        kps = getattr(face, "kps", None)
+        if kps is None or len(kps) < 2:
+            return 0.0
+        left_eye, right_eye = kps[0], kps[1]
+        dy = float(right_eye[1] - left_eye[1])
+        dx = float(right_eye[0] - left_eye[0])
+        return float(np.degrees(np.arctan2(dy, dx)))
+
     def _detect(self, image: np.ndarray) -> list:
         try:
             return list(self._app.get(image) or [])
@@ -59,17 +82,16 @@ class FaceRecognizer:
         if h < 80 or w < 80:
             return [], image
 
-        # Fractions: left/right/top/bottom thirds + mid bands.
         regions = [
-            (0.0, 0.0, 0.70, 0.70),  # top-left
-            (0.30, 0.0, 1.0, 0.70),  # top-right
-            (0.0, 0.30, 0.70, 1.0),  # bottom-left
-            (0.30, 0.30, 1.0, 1.0),  # bottom-right
-            (0.15, 0.0, 0.85, 0.70),  # top-center
-            (0.15, 0.30, 0.85, 1.0),  # bottom-center
-            (0.0, 0.15, 0.70, 0.85),  # left-center
-            (0.30, 0.15, 1.0, 0.85),  # right-center
-            (0.10, 0.10, 0.90, 0.90),  # inner frame
+            (0.0, 0.0, 0.70, 0.70),
+            (0.30, 0.0, 1.0, 0.70),
+            (0.0, 0.30, 0.70, 1.0),
+            (0.30, 0.30, 1.0, 1.0),
+            (0.15, 0.0, 0.85, 0.70),
+            (0.15, 0.30, 0.85, 1.0),
+            (0.0, 0.15, 0.70, 0.85),
+            (0.30, 0.15, 1.0, 0.85),
+            (0.10, 0.10, 0.90, 0.90),
         ]
 
         best_faces: list = []
@@ -94,19 +116,71 @@ class FaceRecognizer:
 
         return best_faces, best_crop
 
+    def _deskew(self, image: np.ndarray, face) -> tuple[object | None, np.ndarray]:
+        """Rotate so eyes are level — fixes mild phone tilt like Face ID."""
+        angle = self._signed_eye_angle(face)
+        if abs(angle) < 6.0 or abs(angle) > 40.0:
+            return face, image
+
+        h, w = image.shape[:2]
+        center = (w / 2.0, h / 2.0)
+        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(
+            image,
+            matrix,
+            (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        faces = self._detect(rotated)
+        if not faces:
+            return face, image
+        return self._largest_face(faces), rotated
+
+    def _best_orientation(self, image: np.ndarray) -> tuple[object | None, np.ndarray]:
+        """
+        Try 0/90/180/270 so login/register works even if the phone photo
+        is sideways (common cause of false 'Face rotated').
+        """
+        candidates: list[np.ndarray] = [image]
+        for code in (
+            cv2.ROTATE_90_CLOCKWISE,
+            cv2.ROTATE_180,
+            cv2.ROTATE_90_COUNTERCLOCKWISE,
+        ):
+            candidates.append(cv2.rotate(image, code))
+
+        best_face = None
+        best_image = image
+        best_score = -1.0
+
+        for candidate in candidates:
+            faces = self._detect(candidate)
+            work = candidate
+            if not faces:
+                faces, work = self._detect_in_regions(candidate)
+            if not faces:
+                continue
+            face = self._largest_face(faces)
+            area = float((face.bbox[2] - face.bbox[0]) * (face.bbox[3] - face.bbox[1]))
+            score = area * (0.35 + 0.65 * self._eye_level_score(face))
+            if score > best_score:
+                best_score = score
+                best_face = face
+                best_image = work
+
+        return best_face, best_image
+
     def _resolve_face(self, image: np.ndarray) -> tuple[object | None, np.ndarray]:
         """
-        Detect a face anywhere in the frame, then re-crop around it so quality
-        and embedding work the same for center / left / right / top / bottom.
+        Detect a face anywhere in the frame (any orientation / position),
+        upright it, then crop around it for stable embeddings.
         """
-        faces = self._detect(image)
-        work = image
-        if not faces:
-            faces, work = self._detect_in_regions(image)
-        if not faces:
+        face, work = self._best_orientation(image)
+        if face is None:
             return None, image
 
-        face = self._largest_face(faces)
+        face, work = self._deskew(work, face)
         centered = crop_around_bbox(work, face.bbox)
         refined = self._detect(centered)
         if refined:
@@ -122,7 +196,7 @@ class FaceRecognizer:
         blink_image: np.ndarray | None = None,
         require_liveness: bool = False,
     ) -> FaceAnalysisResult:
-        # Reject multi-person frames on the full image before region search/crop.
+        # Quick multi-face check on original (and upright variants if needed).
         full_faces = self._detect(image)
         if len(full_faces) > 1:
             face = self._largest_face(full_faces)

@@ -86,9 +86,9 @@ def validate_face_quality(
     scores.append(min(1.0, brightness / 128.0))
 
     blur = _blur_score(image, bbox)
-    if blur < 45:
+    if blur < 28:
         issues.append("Too blurry")
-    scores.append(min(1.0, blur / 200.0))
+    scores.append(min(1.0, blur / 160.0))
 
     size_ratio = _face_size_ratio(bbox, image)
     # Allow smaller faces (common when the face is near a corner/edge of the frame).
@@ -96,10 +96,10 @@ def validate_face_quality(
         issues.append("Face too small")
     scores.append(min(1.0, size_ratio / 0.10))
 
+    # Soft score only — InsightFace already aligns faces for embeddings.
+    # Do NOT hard-reject "Face rotated" (common false positive on mobile selfies).
     angle = _rotation_angle(kps)
-    if angle > 35:
-        issues.append("Face rotated")
-    scores.append(max(0.0, 1.0 - angle / 40.0))
+    scores.append(max(0.45, 1.0 - angle / 55.0))
 
     # Soft score only — never reject because the face is off-center.
     cx = (float(bbox[0]) + float(bbox[2])) / 2.0
