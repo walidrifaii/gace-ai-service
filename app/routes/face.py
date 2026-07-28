@@ -44,8 +44,8 @@ async def register_face(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     recognizer = FaceRecognizer.get()
-    # Enrollment uses quality checks only — liveness is for login verify.
-    result = recognizer.analyze(frame, require_liveness=False)
+    # Soft quality on enroll — still return embedding if a face is found.
+    result = recognizer.analyze(frame, require_liveness=False, strict_quality=False)
 
     if not result.embedding:
         if result.liveness and not result.liveness.passed:
@@ -87,7 +87,7 @@ async def extract_face(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     recognizer = FaceRecognizer.get()
-    result = recognizer.analyze(frame, require_liveness=False)
+    result = recognizer.analyze(frame, require_liveness=False, strict_quality=False)
 
     if not result.embedding:
         message = result.quality.issues[0] if result.quality.issues else "No valid face detected"

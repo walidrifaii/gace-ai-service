@@ -195,6 +195,7 @@ class FaceRecognizer:
         prior_image: np.ndarray | None = None,
         blink_image: np.ndarray | None = None,
         require_liveness: bool = False,
+        strict_quality: bool = True,
     ) -> FaceAnalysisResult:
         # Quick multi-face check on original (and upright variants if needed).
         full_faces = self._detect(image)
@@ -209,7 +210,8 @@ class FaceRecognizer:
             return FaceAnalysisResult([], quality, None, 0.0)
 
         quality = validate_face_quality(work_image, face.bbox, face.kps, 1)
-        if not quality.passed:
+        # Enrollment can keep going with a soft quality miss (still produce embedding).
+        if not quality.passed and strict_quality:
             return FaceAnalysisResult([], quality, None, float(face.det_score))
 
         prior_kps = None
