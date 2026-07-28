@@ -74,8 +74,8 @@ def validate_face_quality(
     if face_count > 1:
         return QualityResult(False, 0.0, ["More than one face detected"])
 
-    h, w = image.shape[:2]
-    if w < 240 or h < 240:
+    img_h, img_w = image.shape[:2]
+    if img_w < 240 or img_h < 240:
         issues.append("Low resolution")
 
     brightness = _face_brightness(image, bbox)
@@ -91,14 +91,22 @@ def validate_face_quality(
     scores.append(min(1.0, blur / 200.0))
 
     size_ratio = _face_size_ratio(bbox, image)
-    if size_ratio < 0.025:
+    # Allow smaller faces (common when the face is near a corner/edge of the frame).
+    if size_ratio < 0.012:
         issues.append("Face too small")
-    scores.append(min(1.0, size_ratio / 0.12))
+    scores.append(min(1.0, size_ratio / 0.10))
 
     angle = _rotation_angle(kps)
-    if angle > 28:
+    if angle > 35:
         issues.append("Face rotated")
-    scores.append(max(0.0, 1.0 - angle / 30.0))
+    scores.append(max(0.0, 1.0 - angle / 40.0))
+
+    # Soft score only — never reject because the face is off-center.
+    cx = (float(bbox[0]) + float(bbox[2])) / 2.0
+    cy = (float(bbox[1]) + float(bbox[3])) / 2.0
+    center_dx = abs(cx / max(1.0, float(img_w)) - 0.5)
+    center_dy = abs(cy / max(1.0, float(img_h)) - 0.5)
+    scores.append(max(0.55, 1.0 - (center_dx + center_dy)))
 
     if not _eyes_open(kps, bbox):
         # Soft warning only — 5-point landmarks often false-positive on mobile selfies.
