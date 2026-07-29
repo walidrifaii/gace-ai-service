@@ -136,6 +136,42 @@ def crop_around_bbox(
     return crop
 
 
+def enhance_for_insightface(image: np.ndarray) -> np.ndarray:
+    """
+    OpenCV preprocessing for higher-quality InsightFace embeddings:
+    - bilateral denoise (keeps edges)
+    - CLAHE contrast on luminance
+    - mild unsharp mask
+    """
+    if image is None or image.size == 0:
+        return image
+
+    frame = image
+    h, w = frame.shape[:2]
+    # Upscale small mobile crops so the detector sees more detail.
+    shortest = min(h, w)
+    if 0 < shortest < 480:
+        scale = 480.0 / float(shortest)
+        frame = cv2.resize(
+            frame,
+            (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+            interpolation=cv2.INTER_CUBIC,
+        )
+
+    denoised = cv2.bilateralFilter(frame, d=5, sigmaColor=45, sigmaSpace=45)
+
+    lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
+    l_ch, a_ch, b_ch = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_ch = clahe.apply(l_ch)
+    merged = cv2.merge([l_ch, a_ch, b_ch])
+    contrasted = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+
+    blur = cv2.GaussianBlur(contrasted, (0, 0), 1.0)
+    sharp = cv2.addWeighted(contrasted, 1.25, blur, -0.25, 0)
+    return sharp
+
+
 def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     norm = np.linalg.norm(embedding)
     if norm == 0:

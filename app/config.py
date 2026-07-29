@@ -2,7 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    face_similarity_threshold: float = 0.55
+    face_similarity_threshold: float = 0.40
+    # buffalo_l = best quality InsightFace pack (detection + recognition).
     face_model_name: str = "buffalo_l"
     face_det_size: int = 640
     # -1 = CPU, 0+ = GPU device index. Auto-picks CUDA when face_force_gpu or ctx>=0.

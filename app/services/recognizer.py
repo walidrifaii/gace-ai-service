@@ -11,7 +11,7 @@ from insightface.app import FaceAnalysis
 from app.config import settings
 from app.services.liveness import LivenessResult, validate_challenge
 from app.services.quality import QualityResult, validate_face_quality
-from app.utils import cosine_similarity, crop_around_bbox, normalize_embedding
+from app.utils import cosine_similarity, crop_around_bbox, enhance_for_insightface, normalize_embedding
 
 logger = logging.getLogger("app.recognizer")
 
@@ -180,9 +180,10 @@ class FaceRecognizer:
 
     def _resolve_face(self, image: np.ndarray) -> tuple[object | None, np.ndarray]:
         """
-        Fast path: detect once on the original frame.
+        Fast path: OpenCV-enhance, detect once on the original frame.
         Only rotate / search regions if that first detection fails.
         """
+        image = enhance_for_insightface(image)
         faces = self._detect(image)
         work = image
 
@@ -208,7 +209,8 @@ class FaceRecognizer:
 
         face = self._largest_face(faces)
         face, work = self._deskew(work, face)
-        centered = crop_around_bbox(work, face.bbox)
+        centered = crop_around_bbox(work, face.bbox, pad_ratio=0.55, min_side=400)
+        centered = enhance_for_insightface(centered)
         refined = self._detect(centered)
         if refined:
             return self._largest_face(refined), centered

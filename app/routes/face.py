@@ -253,7 +253,7 @@ def identify_face(body: IdentifyBody, x_api_key: str | None = Header(default=Non
     return {
         "success": True,
         "matched": matched,
-        "user_id": match.user_id if matched else None,
+        "user_id": match.user_id,  # always return best candidate id
         "score": round(match.score, 4),
         "threshold": threshold,
         "gallery_size": gallery.size,
