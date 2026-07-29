@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 
@@ -12,6 +13,8 @@ from app.services.liveness import LivenessResult, validate_challenge
 from app.services.quality import QualityResult, validate_face_quality
 from app.utils import cosine_similarity, crop_around_bbox, normalize_embedding
 
+logger = logging.getLogger("app.recognizer")
+
 
 @dataclass
 class FaceAnalysisResult:
@@ -21,14 +24,54 @@ class FaceAnalysisResult:
     det_score: float
 
 
+def _available_onnx_providers() -> list[str]:
+    try:
+        import onnxruntime as ort
+
+        return list(ort.get_available_providers())
+    except Exception:
+        return ["CPUExecutionProvider"]
+
+
+def _resolve_ctx_and_providers() -> tuple[int, list[str]]:
+    """
+    Prefer CUDA GPU when available (or FACE_CTX_ID >= 0), else CPU.
+    InsightFace: ctx_id >= 0 → GPU, ctx_id == -1 → CPU.
+    """
+    available = _available_onnx_providers()
+    wants_gpu = settings.face_ctx_id >= 0 or settings.face_force_gpu
+    cuda_ok = "CUDAExecutionProvider" in available
+
+    if wants_gpu and cuda_ok:
+        ctx_id = settings.face_ctx_id if settings.face_ctx_id >= 0 else 0
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        logger.info("InsightFace using GPU ctx_id=%s providers=%s", ctx_id, providers)
+        return ctx_id, providers
+
+    if wants_gpu and not cuda_ok:
+        logger.warning(
+            "GPU requested but CUDAExecutionProvider missing (available=%s). "
+            "Install onnxruntime-gpu. Falling back to CPU.",
+            available,
+        )
+
+    logger.info("InsightFace using CPU providers=%s", ["CPUExecutionProvider"])
+    return -1, ["CPUExecutionProvider"]
+
+
 class FaceRecognizer:
     _instance: "FaceRecognizer | None" = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        self._app = FaceAnalysis(name=settings.face_model_name)
-        self._app.prepare(ctx_id=-1, det_size=(settings.face_det_size, settings.face_det_size))
-        # Slightly lower threshold so faces at frame edges / corners still detect.
+        ctx_id, providers = _resolve_ctx_and_providers()
+        self.ctx_id = ctx_id
+        self.providers = providers
+        self._app = FaceAnalysis(name=settings.face_model_name, providers=providers)
+        self._app.prepare(
+            ctx_id=ctx_id,
+            det_size=(settings.face_det_size, settings.face_det_size),
+        )
         detection = getattr(self._app, "models", {}).get("detection")
         if detection is not None and hasattr(detection, "det_thresh"):
             detection.det_thresh = min(float(detection.det_thresh), 0.40)
@@ -50,7 +93,6 @@ class FaceRecognizer:
 
     @staticmethod
     def _eye_level_score(face) -> float:
-        """Higher when eyes are roughly horizontal (upright face)."""
         kps = getattr(face, "kps", None)
         if kps is None or len(kps) < 2:
             return 0.0
@@ -77,7 +119,7 @@ class FaceRecognizer:
             return []
 
     def _detect_in_regions(self, image: np.ndarray) -> tuple[list, np.ndarray]:
-        """Search overlapping regions so off-center faces (corners/edges) are found."""
+        """Only used after a full-frame miss."""
         h, w = image.shape[:2]
         if h < 80 or w < 80:
             return [], image
@@ -117,7 +159,6 @@ class FaceRecognizer:
         return best_faces, best_crop
 
     def _deskew(self, image: np.ndarray, face) -> tuple[object | None, np.ndarray]:
-        """Rotate so eyes are level — fixes mild phone tilt like Face ID."""
         angle = self._signed_eye_angle(face)
         if abs(angle) < 6.0 or abs(angle) > 40.0:
             return face, image
@@ -137,49 +178,35 @@ class FaceRecognizer:
             return face, image
         return self._largest_face(faces), rotated
 
-    def _best_orientation(self, image: np.ndarray) -> tuple[object | None, np.ndarray]:
-        """
-        Try 0/90/180/270 so login/register works even if the phone photo
-        is sideways (common cause of false 'Face rotated').
-        """
-        candidates: list[np.ndarray] = [image]
-        for code in (
-            cv2.ROTATE_90_CLOCKWISE,
-            cv2.ROTATE_180,
-            cv2.ROTATE_90_COUNTERCLOCKWISE,
-        ):
-            candidates.append(cv2.rotate(image, code))
-
-        best_face = None
-        best_image = image
-        best_score = -1.0
-
-        for candidate in candidates:
-            faces = self._detect(candidate)
-            work = candidate
-            if not faces:
-                faces, work = self._detect_in_regions(candidate)
-            if not faces:
-                continue
-            face = self._largest_face(faces)
-            area = float((face.bbox[2] - face.bbox[0]) * (face.bbox[3] - face.bbox[1]))
-            score = area * (0.35 + 0.65 * self._eye_level_score(face))
-            if score > best_score:
-                best_score = score
-                best_face = face
-                best_image = work
-
-        return best_face, best_image
-
     def _resolve_face(self, image: np.ndarray) -> tuple[object | None, np.ndarray]:
         """
-        Detect a face anywhere in the frame (any orientation / position),
-        upright it, then crop around it for stable embeddings.
+        Fast path: detect once on the original frame.
+        Only rotate / search regions if that first detection fails.
         """
-        face, work = self._best_orientation(image)
-        if face is None:
+        faces = self._detect(image)
+        work = image
+
+        if not faces:
+            # Lazy orientation search — only after first miss.
+            for code in (
+                cv2.ROTATE_90_CLOCKWISE,
+                cv2.ROTATE_180,
+                cv2.ROTATE_90_COUNTERCLOCKWISE,
+            ):
+                candidate = cv2.rotate(image, code)
+                found = self._detect(candidate)
+                if found:
+                    faces = found
+                    work = candidate
+                    break
+
+        if not faces:
+            faces, work = self._detect_in_regions(work if work is not image else image)
+
+        if not faces:
             return None, image
 
+        face = self._largest_face(faces)
         face, work = self._deskew(work, face)
         centered = crop_around_bbox(work, face.bbox)
         refined = self._detect(centered)
@@ -197,7 +224,6 @@ class FaceRecognizer:
         require_liveness: bool = False,
         strict_quality: bool = True,
     ) -> FaceAnalysisResult:
-        # Quick multi-face check on original (and upright variants if needed).
         full_faces = self._detect(image)
         if len(full_faces) > 1:
             face = self._largest_face(full_faces)
@@ -210,7 +236,6 @@ class FaceRecognizer:
             return FaceAnalysisResult([], quality, None, 0.0)
 
         quality = validate_face_quality(work_image, face.bbox, face.kps, 1)
-        # Enrollment can keep going with a soft quality miss (still produce embedding).
         if not quality.passed and strict_quality:
             return FaceAnalysisResult([], quality, None, float(face.det_score))
 

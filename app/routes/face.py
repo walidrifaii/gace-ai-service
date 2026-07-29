@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import random
+from typing import Any
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.gallery import FaceGallery
 from app.services.liveness import CHALLENGES
 from app.services.recognizer import FaceRecognizer
 from app.utils import parse_embedding_json, read_image_bytes
@@ -16,6 +19,25 @@ def _check_api_key(x_api_key: str | None) -> None:
     expected = settings.face_api_key.strip()
     if expected and (x_api_key or "").strip() != expected:
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+class GalleryItem(BaseModel):
+    user_id: int
+    embedding: list[float] = Field(min_length=1)
+
+
+class GalleryUpsertBody(BaseModel):
+    user_id: int
+    embedding: list[float] = Field(min_length=1)
+
+
+class GalleryRebuildBody(BaseModel):
+    items: list[GalleryItem] = Field(default_factory=list)
+
+
+class IdentifyBody(BaseModel):
+    embedding: list[float] = Field(min_length=1)
+    threshold: float | None = None
 
 
 @router.get("/challenge")
@@ -44,7 +66,6 @@ async def register_face(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     recognizer = FaceRecognizer.get()
-    # Soft quality on enroll — still return embedding if a face is found.
     result = recognizer.analyze(frame, require_liveness=False, strict_quality=False)
 
     if not result.embedding:
@@ -173,4 +194,67 @@ async def verify_face(
         "score": round(score, 4),
         "confidence": round(score, 4),
         "threshold": settings.face_similarity_threshold,
+    }
+
+
+@router.post("/gallery/upsert")
+def gallery_upsert(body: GalleryUpsertBody, x_api_key: str | None = Header(default=None)):
+    _check_api_key(x_api_key)
+    gallery = FaceGallery.get()
+    gallery.upsert(body.user_id, body.embedding)
+    return {"success": True, "size": gallery.size}
+
+
+@router.post("/gallery/remove")
+def gallery_remove(user_id: int = Form(...), x_api_key: str | None = Header(default=None)):
+    _check_api_key(x_api_key)
+    gallery = FaceGallery.get()
+    gallery.remove(user_id)
+    return {"success": True, "size": gallery.size}
+
+
+@router.post("/gallery/rebuild")
+def gallery_rebuild(body: GalleryRebuildBody, x_api_key: str | None = Header(default=None)):
+    _check_api_key(x_api_key)
+    gallery = FaceGallery.get()
+    size = gallery.rebuild([(item.user_id, item.embedding) for item in body.items])
+    return {"success": True, "size": size}
+
+
+@router.get("/gallery/status")
+def gallery_status(x_api_key: str | None = Header(default=None)):
+    _check_api_key(x_api_key)
+    gallery = FaceGallery.get()
+    return {"success": True, "size": gallery.size}
+
+
+@router.post("/identify")
+def identify_face(body: IdentifyBody, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Fast 1:N search against the in-memory FAISS/NumPy gallery."""
+    _check_api_key(x_api_key)
+    gallery = FaceGallery.get()
+    threshold = (
+        float(body.threshold)
+        if body.threshold is not None
+        else float(settings.face_similarity_threshold)
+    )
+    match = gallery.search(body.embedding, top_k=1)
+    if match is None:
+        return {
+            "success": True,
+            "matched": False,
+            "user_id": None,
+            "score": 0.0,
+            "threshold": threshold,
+            "gallery_size": gallery.size,
+        }
+
+    matched = match.score + 0.0001 >= threshold
+    return {
+        "success": True,
+        "matched": matched,
+        "user_id": match.user_id if matched else None,
+        "score": round(match.score, 4),
+        "threshold": threshold,
+        "gallery_size": gallery.size,
     }
