@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     face_ctx_id: int = -1
     # When true, prefer CUDA if onnxruntime-gpu is installed.
     face_force_gpu: bool = True
+    # Require FAISS for 1:N login search (recommended).
+    face_require_faiss: bool = True
+    # Where FAISS gallery vectors/ids are persisted.
+    face_gallery_path: str = "/data/faiss"
     face_api_key: str = ""
     host: str = "0.0.0.0"
     port: int = 8001

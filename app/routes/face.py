@@ -202,7 +202,7 @@ def gallery_upsert(body: GalleryUpsertBody, x_api_key: str | None = Header(defau
     _check_api_key(x_api_key)
     gallery = FaceGallery.get()
     gallery.upsert(body.user_id, body.embedding)
-    return {"success": True, "size": gallery.size}
+    return {"success": True, **gallery.status()}
 
 
 @router.post("/gallery/remove")
@@ -210,7 +210,7 @@ def gallery_remove(user_id: int = Form(...), x_api_key: str | None = Header(defa
     _check_api_key(x_api_key)
     gallery = FaceGallery.get()
     gallery.remove(user_id)
-    return {"success": True, "size": gallery.size}
+    return {"success": True, **gallery.status()}
 
 
 @router.post("/gallery/rebuild")
@@ -218,19 +218,19 @@ def gallery_rebuild(body: GalleryRebuildBody, x_api_key: str | None = Header(def
     _check_api_key(x_api_key)
     gallery = FaceGallery.get()
     size = gallery.rebuild([(item.user_id, item.embedding) for item in body.items])
-    return {"success": True, "size": size}
+    return {"success": True, "size": size, **gallery.status()}
 
 
 @router.get("/gallery/status")
 def gallery_status(x_api_key: str | None = Header(default=None)):
     _check_api_key(x_api_key)
     gallery = FaceGallery.get()
-    return {"success": True, "size": gallery.size}
+    return {"success": True, **gallery.status()}
 
 
 @router.post("/identify")
 def identify_face(body: IdentifyBody, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
-    """Fast 1:N search against the in-memory FAISS/NumPy gallery."""
+    """Fast 1:N search against the FAISS face gallery."""
     _check_api_key(x_api_key)
     gallery = FaceGallery.get()
     threshold = (
@@ -239,6 +239,7 @@ def identify_face(body: IdentifyBody, x_api_key: str | None = Header(default=Non
         else float(settings.face_similarity_threshold)
     )
     match = gallery.search(body.embedding, top_k=1)
+    status = gallery.status()
     if match is None:
         return {
             "success": True,
@@ -247,6 +248,8 @@ def identify_face(body: IdentifyBody, x_api_key: str | None = Header(default=Non
             "score": 0.0,
             "threshold": threshold,
             "gallery_size": gallery.size,
+            "backend": status.get("backend"),
+            "faiss": status.get("faiss"),
         }
 
     matched = match.score + 0.0001 >= threshold
@@ -257,4 +260,6 @@ def identify_face(body: IdentifyBody, x_api_key: str | None = Header(default=Non
         "score": round(match.score, 4),
         "threshold": threshold,
         "gallery_size": gallery.size,
+        "backend": status.get("backend"),
+        "faiss": status.get("faiss"),
     }

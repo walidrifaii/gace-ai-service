@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-RUN mkdir -p /data/insightface /data/argos-translate
+RUN mkdir -p /data/insightface /data/argos-translate /data/faiss
 
 EXPOSE 8001
 

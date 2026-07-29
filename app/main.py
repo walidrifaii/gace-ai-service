@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.routes.face import router as face_router
+from app.services.gallery import FaceGallery
 from app.services.recognizer import FaceRecognizer, _available_onnx_providers
 from app.translation.cache import TranslationCache
 from app.translation.config import settings as translation_settings
@@ -12,7 +13,7 @@ from app.translation.translator import ArgosTranslator, TranslationService
 
 logger = logging.getLogger("app.main")
 
-app = FastAPI(title="Ehkini Face AI Service", version="1.1.0")
+app = FastAPI(title="Ehkini Face AI Service", version="1.2.0")
 app.include_router(face_router)
 app.include_router(translation_router)
 
@@ -39,6 +40,10 @@ async def _warm_up() -> None:
         _available_onnx_providers(),
     )
 
+    logger.info("Warming up FAISS face gallery...")
+    gallery = FaceGallery.get()
+    logger.info("FAISS gallery ready: %s", gallery.status())
+
 
 @app.get("/health")
 def health():
@@ -49,6 +54,12 @@ def health():
     except Exception:
         ctx_id = None
         providers = []
+
+    try:
+        gallery_status = FaceGallery.get().status()
+    except Exception as exc:
+        gallery_status = {"error": str(exc), "faiss": False, "size": 0}
+
     return {
         "status": "ok",
         "threshold": settings.face_similarity_threshold,
@@ -56,4 +67,6 @@ def health():
         "providers": providers,
         "gpu": bool(ctx_id is not None and ctx_id >= 0),
         "onnx_providers": _available_onnx_providers(),
+        "gallery": gallery_status,
+        "faiss": bool(gallery_status.get("faiss")),
     }
